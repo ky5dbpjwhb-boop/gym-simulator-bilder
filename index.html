@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Gym Simulator</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow: hidden;
+  }
+  #root {
+    width: 100vw;
+    height: 100dvh;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// ============================================
+// CHARAKTERE
+// Lade Dateien mit GENAU diesen Namen in dasselbe GitHub-Repo hoch,
+// in dem auch diese index.html liegt (gleiche Ebene, kein Unterordner).
+// Übergangs-GIFs sind jetzt PRO CHARAKTER, nicht mehr geteilt:
+//
+// char1-vorschau.PNG    char2-vorschau.PNG
+// char1-standbild.JPG   char2-standbild.JPG
+// char1-flex.JPG        char2-flex.JPG
+// char1-benchpress-unten.JPG   char2-benchpress-unten.PNG
+// char1-benchpress-oben.JPG    char2-benchpress-oben.PNG
+// char1-squat-unten.JPG        char2-squat-unten.JPG
+// char1-squat-oben.JPG         char2-squat-oben.JPG
+// char1-pullup-unten.JPG       char2-pullup-unten.JPG
+// char1-pullup-oben.JPG        char2-pullup-oben.JPG
+// char1-clip-benchpress.gif    char2-clip-benchpress.gif
+// char1-clip-squat.gif         char2-clip-squat.gif
+// char1-clip-pullup.gif        char2-clip-pullup.gif
+//
+// Kein Username/Repo mehr nötig - die Datei liegt ja im selben Repo,
+// deshalb reicht der reine Dateiname als Pfad.
+// ============================================
+const characters = [
+    {
+        id: "char1",
+        name: "Charakter 1",
+        previewImage: "char1-vorschau.PNG",
+        idleImage: "char1-standbild.JPG",
+        flexImage: "char1-flex.JPG",
+        exerciseImages: {
+            benchpress: { down: "char1-benchpress-unten.JPG", up: "char1-benchpress-oben.JPG" },
+            squat: { down: "char1-squat-unten.JPG", up: "char1-squat-oben.JPG" },
+            pullup: { down: "char1-pullup-unten.JPG", up: "char1-pullup-oben.JPG" },
+        },
+        transitionClips: {
+            benchpress: "char1-clip-benchpress.gif",
+            squat: "char1-clip-squat.gif",
+            pullup: "char1-clip-pullup.gif",
+        },
+    },
+    {
+        id: "char2",
+        name: "Charakter 2",
+        previewImage: "char2-vorschau.PNG",
+        idleImage: "char2-standbild.JPG",
+        flexImage: "char2-flex.JPG",
+        exerciseImages: {
+            benchpress: { down: "char2-benchpress-unten.PNG", up: "char2-benchpress-oben.PNG" },
+            squat: { down: "char2-squat-unten.JPG", up: "char2-squat-oben.JPG" },
+            pullup: { down: "char2-pullup-unten.JPG", up: "char2-pullup-oben.JPG" },
+        },
+        transitionClips: {
+            benchpress: "char2-clip-benchpress.gif",
+            squat: "char2-clip-squat.gif",
+            pullup: "char2-clip-pullup.gif",
+        },
+    },
+]
+
+// ============================================
+// HIER NEUE ÜBUNGEN HINZUFÜGEN
+// id (eindeutig) und name reichen hier. Denk dran: für eine neue Übung
+// brauchst du zusätzlich bei JEDEM Charakter oben einen exerciseImages-
+// UND einen transitionClips-Eintrag mit der gleichen id, und musst die
+// passenden Dateien hochladen. Der "name" ist die einzige Stelle, die
+// du fürs Umbenennen ändern musst.
+// ============================================
+const exercises = [
+    { id: "benchpress", name: "Bankdrücken" },
+    { id: "squat", name: "Kniebeuge" },
+    { id: "pullup", name: "Klimmzüge" },
+]
+
+// Diese Werte kannst du frei anpassen, um das Spielgefühl zu verändern
+const PUMP_PRO_KLICK = 4 // wie viel die Leiste pro Klick steigt (0-100) - kleiner = schwerer
+const ABSINKEN_PRO_TICK = 1 // wie viel die Leiste von selbst sinkt
+const ABSINKEN_INTERVALL_MS = 200 // wie oft sie von selbst sinkt (alle 200ms)
+const FLEX_SZENE_DAUER_MS = 1500 // wie lange die Flex-Szene sichtbar bleibt
+const UEBERGANGS_DAUER_MS = 1200 // wie lange das Übergangs-GIF gezeigt wird, bevor es zur Übung wechselt
+const BILD_UEBERGANG_MS = 120 // wie lange das Überblenden zwischen zwei Trainingsbildern dauert
+
+function GymSimulator() {
+    // Ob gerade der Charakterauswahl-Screen gezeigt wird.
+    // Startet mit true, damit man vor dem ersten Betreten des Gyms wählen muss.
+    const [zeigeCharakterauswahl, setZeigeCharakterauswahl] = useState(true)
+    const [selectedCharacterId, setSelectedCharacterId] = useState(null)
+
+    // Welche Übung gerade aktiv ist (man klickt/trainiert dort). null = keine, zeigt Standbild
+    const [aktiveUebungId, setAktiveUebungId] = useState(null)
+    // Welche Übung gerade im Übergangs-Clip läuft, bevor sie aktiv wird. null = kein Übergang gerade
+    const [uebergangsUebungId, setUebergangsUebungId] = useState(null)
+    // Toggle zwischen den zwei Bildern der aktiven Übung (eine Wiederholung = ein Umschalten)
+    const [istObenPosition, setIstObenPosition] = useState(false)
+    // Die Leiste, 0 bis 100
+    const [pumpLevel, setPumpLevel] = useState(0)
+    // Ob gerade die Flex-Szene läuft
+    const [zeigeFlexSzene, setZeigeFlexSzene] = useState(false)
+
+    const selectedCharacter = characters.find((c) => c.id === selectedCharacterId)
+    const aktiveUebung = exercises.find((e) => e.id === aktiveUebungId)
+
+    // Die Leiste sinkt automatisch mit der Zeit, unabhängig vom Klicken.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setPumpLevel((prev) => Math.max(0, prev - ABSINKEN_PRO_TICK))
+        }, ABSINKEN_INTERVALL_MS)
+        return () => clearInterval(interval)
+    }, [])
+
+    // Wenn ein Übergang startet, nach kurzer Zeit automatisch zur Übung wechseln.
+    // GIFs haben kein "Ende"-Ereignis wie Videos, deshalb per Timer statt onEnded.
+    useEffect(() => {
+        if (!uebergangsUebungId) return
+        const timer = setTimeout(() => {
+            uebergangBeendet()
+        }, UEBERGANGS_DAUER_MS)
+        return () => clearTimeout(timer)
+    }, [uebergangsUebungId])
+
+    // Wird bei jedem Klick/Tap auf den Trainingsbereich aufgerufen
+    function handleKlick() {
+        if (!aktiveUebung) return // ohne aktive Übung passiert beim Klicken nichts
+
+        setIstObenPosition((prev) => !prev) // Bild umschalten = eine Wiederholung ausführen
+
+        setPumpLevel((prev) => {
+            const neuerLevel = Math.min(100, prev + PUMP_PRO_KLICK)
+            if (neuerLevel >= 100) {
+                starteFlexSzene()
+            }
+            return neuerLevel
+        })
+    }
+
+    function starteFlexSzene() {
+        setZeigeFlexSzene(true)
+        setTimeout(() => {
+            setZeigeFlexSzene(false)
+            setPumpLevel(0)
+        }, FLEX_SZENE_DAUER_MS)
+    }
+
+    // Übung anwählen: startet erstmal den Übergangs-Clip, nicht direkt die Übung selbst
+    function waehleUebung(id) {
+        setUebergangsUebungId(id)
+    }
+
+    // Wird aufgerufen, wenn der Übergangs-Clip zu Ende gespielt hat
+    function uebergangBeendet() {
+        setAktiveUebungId(uebergangsUebungId)
+        setUebergangsUebungId(null)
+        setIstObenPosition(false)
+        setPumpLevel(0)
+    }
+
+    function waehleCharakter(id) {
+        setSelectedCharacterId(id)
+        setZeigeCharakterauswahl(false)
+    }
+
+    // ============================================
+    // CHARAKTERAUSWAHL-SCREEN
+    // ============================================
+    if (zeigeCharakterauswahl) {
+        return (
+            <div
+                style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 24,
+                    backgroundColor: "#111",
+                    fontFamily: "system-ui, sans-serif",
+                    padding: "env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px",
+                    boxSizing: "border-box",
+                }}
+            >
+                <h2 style={{ color: "white", margin: 0, fontSize: 20, textAlign: "center" }}>Charakter wählen</h2>
+                <div style={{ display: "flex", gap: 16 }}>
+                    {characters.map((c) => (
+                        <button
+                            key={c.id}
+                            onClick={() => waehleCharakter(c.id)}
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: 12,
+                                backgroundColor: selectedCharacterId === c.id ? "#ff4d4d" : "#2a2a2a",
+                                border: "none",
+                                borderRadius: 12,
+                                cursor: "pointer",
+                            }}
+                        >
+                            <img
+                                src={c.previewImage}
+                                alt={c.name}
+                                style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 8 }}
+                            />
+                            <span style={{ color: "white", fontSize: 14, fontWeight: 600 }}>{c.name}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        )
+    }
+
+    // ============================================
+    // ÜBERGANGS-GIF (jetzt pro Charakter)
+    // ============================================
+    if (uebergangsUebungId && selectedCharacter) {
+        return (
+            <img
+                key={selectedCharacter.id + uebergangsUebungId}
+                src={selectedCharacter.transitionClips[uebergangsUebungId]}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }}
+            />
+        )
+    }
+
+    // Bestimmt, welches Bild im Trainingsbereich gerade angezeigt werden soll,
+    // abhängig vom gewählten Charakter
+    let aktuellesBild = selectedCharacter?.idleImage
+    if (zeigeFlexSzene) {
+        aktuellesBild = selectedCharacter?.flexImage
+    } else if (aktiveUebung && selectedCharacter) {
+        const bilder = selectedCharacter.exerciseImages[aktiveUebung.id]
+        aktuellesBild = istObenPosition ? bilder.up : bilder.down
+    }
+
+    // ============================================
+    // GYM-RAUM (Hauptansicht)
+    // ============================================
+    return (
+        <div
+            style={{
+                width: "100%",
+                height: "100%",
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                fontFamily: "system-ui, sans-serif",
+            }}
+        >
+            {/* Trainingsbereich: hier wird geklickt/getappt */}
+            <div
+                onClick={handleKlick}
+                style={{
+                    flex: 1,
+                    backgroundColor: "#1a1a1a",
+                    cursor: aktiveUebung ? "pointer" : "default",
+                    position: "relative",
+                    overflow: "hidden",
+                }}
+            >
+                {/* Überblendetes Bild statt hartem Umschalten - siehe UeberblendBild unten */}
+                <UeberblendBild src={aktuellesBild} dauerMs={BILD_UEBERGANG_MS} />
+
+                {/* Aufgepumpt-Leiste am rechten Rand */}
+                <div
+                    style={{
+                        position: "absolute",
+                        right: 16,
+                        top: 16,
+                        bottom: 16,
+                        width: 20,
+                        backgroundColor: "rgba(0,0,0,0.35)",
+                        borderRadius: 10,
+                        overflow: "hidden",
+                    }}
+                >
+                    <div
+                        style={{
+                            position: "absolute",
+                            bottom: 0,
+                            width: "100%",
+                            height: `${pumpLevel}%`,
+                            backgroundColor: "#ff4d4d",
+                            transition: "height 0.1s linear",
+                        }}
+                    />
+                </div>
+            </div>
+
+            {/* Buttons unten: Übungen wählen + Charakter wechseln */}
+            <div
+                style={{
+                    display: "flex",
+                    gap: 6,
+                    padding: "10px 10px calc(10px + env(safe-area-inset-bottom)) 10px",
+                    backgroundColor: "#111",
+                    boxSizing: "border-box",
+                }}
+            >
+                {exercises.map((ex) => (
+                    <button
+                        key={ex.id}
+                        onClick={() => waehleUebung(ex.id)}
+                        style={{
+                            flex: 1,
+                            minWidth: 0,
+                            padding: "10px 2px",
+                            backgroundColor: aktiveUebungId === ex.id ? "#ff4d4d" : "#2a2a2a",
+                            color: "white",
+                            border: "none",
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                        }}
+                    >
+                        {ex.name}
+                    </button>
+                ))}
+                <button
+                    onClick={() => setZeigeCharakterauswahl(true)}
+                    style={{
+                        flexShrink: 0,
+                        padding: "10px 14px",
+                        backgroundColor: "#2a2a2a",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 8,
+                        fontSize: 16,
+                    }}
+                >
+                    👤
+                </button>
+            </div>
+        </div>
+    )
+}
+
+// Zeigt ein Bild an und überblendet sanft (Fade), wenn sich "src" ändert,
+// statt hart umzuschalten. Trick: zwei übereinanderliegende Ebenen (a/b),
+// die abwechselnd das neue Bild bekommen und per Opacity ein-/ausgeblendet
+// werden, mit einer CSS-transition auf "opacity".
+function UeberblendBild({ src, dauerMs }) {
+    const [schichten, setSchichten] = useState({ a: src, b: src, aktiv: "a" })
+
+    useEffect(() => {
+        setSchichten((prev) => {
+            if (prev[prev.aktiv] === src) return prev // kein echter Wechsel, nichts tun
+            const naechste = prev.aktiv === "a" ? "b" : "a"
+            return { ...prev, [naechste]: src, aktiv: naechste }
+        })
+    }, [src])
+
+    const basisStyle = {
+        position: "absolute",
+        inset: 0,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        transition: `opacity ${dauerMs}ms ease`,
+    }
+
+    return (
+        <React.Fragment>
+            <div style={{ ...basisStyle, backgroundImage: `url(${schichten.a})`, opacity: schichten.aktiv === "a" ? 1 : 0 }} />
+            <div style={{ ...basisStyle, backgroundImage: `url(${schichten.b})`, opacity: schichten.aktiv === "b" ? 1 : 0 }} />
+        </React.Fragment>
+    )
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"))
+root.render(<GymSimulator />)
+</script>
+</body>
+</html>
